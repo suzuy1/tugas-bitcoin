@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitcoin Advanced Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+</head>
+<body class="bg-[#0b0e11] text-[#eaecef] font-sans antialiased min-h-screen">
+
+    <div class="max-w-6xl mx-auto px-4 py-6">
+        <div class="flex flex-col md:flex-row justify-between items-center border-b border-[#2b3139] pb-6 mb-6 gap-4">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-bold text-[#f2a900] flex items-center gap-2">
+                    📊 Bitcoin Hybrid Analytics Dashboard
+                </h1>
+                <p class="text-sm text-[#929aa5] mt-1">Olah data historis 2018 - 2025 secara offline & interaktif</p>
+            </div>
+            <div class="bg-[#1e2329] px-4 py-2 rounded-lg border border-[#2b3139] text-xs text-[#929aa5]">
+                Status: <span id="statusBadge" class="text-red-400 font-semibold">Belum Ada Data</span>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 bg-[#181a20] p-5 rounded-xl border border-[#2b3139] mb-6">
+            <div>
+                <label class="block text-xs font-semibold text-[#929aa5] mb-2 uppercase tracking-wider">1. Pilih File CSV Bitcoin</label>
+                <input type="file" id="csvFileInput" accept=".csv" 
+                       class="w-full text-xs text-[#929aa5] file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-[#f2a900] file:text-[#0b0e11] hover:file:bg-[#d49400] file:cursor-pointer cursor-pointer"/>
+            </div>
+            <div>
+                <label class="block text-xs font-semibold text-[#929aa5] mb-2 uppercase tracking-wider">2. Tanggal Mulai</label>
+                <input type="date" id="startDateInput" value="2024-01-01" min="2018-01-01" max="2025-12-31"
+                       class="w-full bg-[#2b3139] border border-[#474f59] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-[#f2a900]"/>
+            </div>
+            <div>
+                <label class="block text-xs font-semibold text-[#929aa5] mb-2 uppercase tracking-wider">3. Tanggal Selesai</label>
+                <input type="date" id="endDateInput" value="2025-12-31" min="2018-01-01" max="2025-12-31"
+                       class="w-full bg-[#2b3139] border border-[#474f59] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-[#f2a900]"/>
+            </div>
+            <div class="flex items-end">
+                <button id="processBtn" disabled
+                        class="w-full bg-[#2b3139] text-[#929aa5] font-bold py-2 px-4 rounded-lg text-sm cursor-not-allowed transition duration-200">
+                    Proses & Filter Data
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-[#181a20] p-4 rounded-xl border border-[#2b3139]">
+                <p class="text-xs text-[#929aa5]">Harga Awal Periode</p>
+                <h3 id="m_hargaAwal" class="text-lg font-bold mt-1 text-white">$-</h3>
+            </div>
+            <div class="bg-[#181a20] p-4 rounded-xl border border-[#2b3139]">
+                <p class="text-xs text-[#929aa5]">Harga Akhir Periode</p>
+                <h3 id="m_hargaAkhir" class="text-lg font-bold mt-1 text-white">$-</h3>
+                <span id="m_pctChange" class="text-xs font-semibold block mt-0.5">-</span>
+            </div>
+            <div class="bg-[#181a20] p-4 rounded-xl border border-[#2b3139]">
+                <p class="text-xs text-green-400">🔺 Harga Tertinggi (Peak)</p>
+                <h3 id="m_hargaMax" class="text-lg font-bold mt-1 text-green-400">$-</h3>
+            </div>
+            <div class="bg-[#181a20] p-4 rounded-xl border border-[#2b3139]">
+                <p class="text-xs text-red-400">🔻 Harga Terendah (Floor)</p>
+                <h3 id="m_hargaMin" class="text-lg font-bold mt-1 text-red-400">$-</h3>
+            </div>
+        </div>
+
+        <div class="bg-[#181a20] p-4 rounded-xl border border-[#2b3139] relative min-h-[400px]">
+            <div id="loadingOverlay" class="absolute inset-0 bg-[#181a20]/90 flex flex-col justify-center items-center rounded-xl z-10 hidden">
+                <div class="w-10 h-10 border-4 border-[#f2a900] border-t-transparent rounded-full animate-spin mb-2"></div>
+                <p class="text-sm text-[#929aa5]">Sedang mereduksi & memproses baris data...</p>
+            </div>
+            <canvas id="bitcoinChart" class="w-full h-[400px]"></canvas>
+        </div>
+    </div>
+
+    <script>
+        let rawDataset = []; 
+        let currentChart = null;
+
+        const fileInput = document.getElementById('csvFileInput');
+        const processBtn = document.getElementById('processBtn');
+        const statusBadge = document.getElementById('statusBadge');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+
+        // 1. EVENT: Ketika User Memilih File CSV
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            loadingOverlay.classList.remove('hidden');
+            statusBadge.innerText = "Membaca CSV...";
+            statusBadge.className = "text-yellow-400 font-semibold";
+
+            // Gunakan PapaParse untuk membaca file berukuran besar secara streaming
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    rawDataset = results.data;
+                    processBtn.disabled = false;
+                    processBtn.className = "w-full bg-[#f2a900] hover:bg-[#d49400] text-[#0b0e11] font-bold py-2 px-4 rounded-lg text-sm transition duration-200 cursor-pointer";
+                    
+                    statusBadge.innerText = `Data Siap (${rawDataset.length.toLocaleString()} Baris)`;
+                    statusBadge.className = "text-green-400 font-semibold";
+                    loadingOverlay.classList.add('hidden');
+                    
+                    // Langsung eksekusi trigger visualisasi awal
+                    processData();
+                },
+                error: function(err) {
+                    alert("Gagal membaca file CSV: " + err.message);
+                    loadingOverlay.classList.add('hidden');
+                }
+            });
+        });
+
+        // 2. EVENT: Ketika Tombol Proses Diklik
+        processBtn.addEventListener('click', processData);
+
+        // 3. FUNGSI LOGIKA UTAMA (Sama persis seperti python: auto detect, timezone clean, & filter)
+        function processData() {
+            if (rawDataset.length === 0) return;
+
+            loadingOverlay.classList.remove('hidden');
+
+            const startVal = new Date(document.getElementById('startDateInput').value);
+            const endVal = new Date(document.getElementById('endDateInput').value);
+
+            if (startVal > endVal) {
+                alert("Tanggal Mulai tidak boleh melewati Tanggal Selesai!");
+                loadingOverlay.classList.add('hidden');
+                return;
+            }
+
+            // Ambil sampel objek data pertama untuk mencari nama kolom otomatis
+            const sampleRow = rawDataset[0];
+            const fields = Object.keys(sampleRow).map(f => f.trim());
+            
+            // Auto detect kandidat nama kolom
+            const colTglOriginal = Object.keys(sampleRow).find(k => ['date', 'open time', 'timestamp', 'time'].includes(k.trim().toLowerCase()));
+            const colHrgOriginal = Object.keys(sampleRow).find(k => ['close', 'price', 'harga'].includes(k.trim().toLowerCase()));
+
+            if (!colTglOriginal || !colHrgOriginal) {
+                alert("Struktur kolom file CSV tidak dikenali sistem dashboard!");
+                loadingOverlay.classList.add('hidden');
+                return;
+            }
+
+            // Proses Penyaringan & Pembersihan Data
+            let filteredData = [];
+
+            for (let i = 0; i < rawDataset.length; i++) {
+                const row = rawDataset[i];
+                let tglRaw = row[colTglOriginal];
+                let hrgRaw = parseFloat(row[colHrgOriginal]);
+
+                if (isNaN(hrgRaw)) continue;
+
+                // Parsing tanggal fleksibel (bisa angka timestamp milidetik atau string biasa)
+                let rowDate;
+                if (!isNaN(tglRaw) && tglRaw.toString().length > 10) {
+                    rowDate = new Date(parseInt(tglRaw)); // Unix timestamp ms
+                } else {
+                    rowDate = new Date(tglRaw); // Text date ISO
+                }
+
+                // Pengkondisian untuk memotong zona waktu (tz-naive sync)
+                if (isNaN(rowDate.getTime())) continue;
+
+                if (rowDate >= startVal && rowDate <= endVal) {
+                    filteredData.push({
+                        date: rowDate,
+                        price: hrgRaw
+                    });
+                }
+            }
+
+            // Urutkan data dari tanggal terlama ke terbaru agar grafik berurutan
+            filteredData.sort((a, b) => a.date - b.date);
+
+            if (filteredData.length === 0) {
+                alert("Tidak ada data yang ditemukan pada rentang tanggal tersebut!");
+                loadingOverlay.classList.add('hidden');
+                return;
+            }
+
+            // 4. KALKULASI METRIK STATISTIK
+            const hargaAwal = filteredData[0].price;
+            const hargaAkhir = filteredData[filteredData.length - 1].price;
+            const semuaHarga = filteredData.map(d => d.price);
+            const hargaMax = Math.max(...semuaHarga);
+            const hargaMin = Math.min(...semuaHarga);
+            const pctChange = ((hargaAkhir - hargaAwal) / hargaAwal) * 100;
+
+            // Update UI Teks Komponen
+            document.getElementById('m_hargaAwal').innerText = `$${hargaAwal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            document.getElementById('m_hargaAkhir').innerText = `$${hargaAkhir.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            document.getElementById('m_hargaMax').innerText = `$${hargaMax.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            document.getElementById('m_hargaMin').innerText = `$${hargaMin.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            
+            const pctElem = document.getElementById('m_pctChange');
+            pctElem.innerText = `${pctChange >= 0 ? '📈 +' : '📉 '}${pctChange.toFixed(2)}%`;
+            pctElem.className = `text-xs font-semibold block mt-0.5 ${pctChange >= 0 ? 'text-green-400' : 'text-red-400'}`;
+
+            // 5. RENDERING GRAFIK DENGAN CHART.JS
+            const labels = filteredData.map(d => d.date.toLocaleDateString('id-ID'));
+            const dataPrices = filteredData.map(d => d.price);
+
+            if (currentChart) {
+                currentChart.destroy(); // Hancurkan grafik lama agar tidak tumpang tindih
+            }
+
+            const ctx = document.getElementById('bitcoinChart').getContext('2d');
+            currentChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Harga Close BTC (USD)',
+                        data: dataPrices,
+                        borderColor: '#f2a900',
+                        borderWidth: 1.5,
+                        pointRadius: labels.length > 200 ? 0 : 1, // Sembunyikan titik kecil kalau data terlalu padat agar tidak lelet
+                        tension: 0.05,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: '#2b3139', alpha: 0.2 },
+                            ticks: { color: '#929aa5', maxTicksLimit: 12 }
+                        },
+                        y: {
+                            grid: { color: '#2b3139', alpha: 0.2 },
+                            ticks: { color: '#929aa5', callback: (value) => '$' + value.toLocaleString() }
+                        }
+                    }
+                }
+            });
+
+            loadingOverlay.classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
